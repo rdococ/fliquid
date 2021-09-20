@@ -1,0 +1,36 @@
+#    If enabled, the mod only tries to achieve an approximate equilibrium (a very low value if metadata is enabled, 1/64 if disabled).
+#    This reduces the server load when dealing with large bodies of liquids, but reduces accuracy.
+#    The effects may only be visible once liquid nodes are updated.
+fliquid_approximate_equilibrium (Require only an approximate equilibrium) bool true
+
+[Simulation]
+#    How many times a finite liquid node should attempt to update in one second.
+fliquid_simulation_speed (Simulation speed) int 10
+
+#    How many finite liquid node updates are allowed per second.
+#    Updates past this point will be dropped.
+fliquid_max_updates_per_second (Maximum updates per second) int 10000
+
+#    If enabled, uses metadata to store liquid levels as floating point numbers. Otherwise, uses param2 alone to store liquid levels as integers from 0 to 127.
+#    Makes it easier for many bodies of liquid to fully equalize, but uses a bit more memory.
+#    This will make the 'approximate equilibrium' setting far less accurate (as now it can only achieve 1/64, not a very low value).
+#    Disabling this feature will destroy some amount of liquid on pre-existing worlds!
+fliquid_use_metadata (Use metadata for floating point liquid levels) bool true
+
+#    If enabled, displaces liquid rather than destroying it when placing nodes.
+#    This may increase server load if you're building deep underwater.
+fliquid_displace_liquids (Displace liquids when placing nodes) bool true
+
+[*Experimental]
+
+#    If enabled, liquid compression will be simulated, allowing connected bodies of compressible liquid to (try to) equalize.
+#    There are no complex calculations to do this, but it's not very effective, so it's probably not worth it.
+#    The effects may only be visible once liquid nodes are updated.
+fliquid_support_compression (Support liquid compression) bool false
+
+#    If enabled, converts infinite water and lava to their finite equivalents when they flow.
+#    Very experimental and doesn't work properly at the moment.
+fliquid_convert_liquids (Convert water and lava to finite on flow) bool false
+
+#    If enabled, adds experimental blocks used to test the mod.
+fliquid_experimental_blocks (Add experimental blocks and items) bool false
