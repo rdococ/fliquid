@@ -34,7 +34,7 @@ fliquid_convert_liquids (Convert water and lava to finite on flow) bool false
 #    Makes it easier for many bodies of liquid to fully equalize, but uses a bit more memory.
 #    Disabling this will make the 'approximate equilibrium' setting far less accurate (as now it can only achieve 1/64, not a very low value).
 #    Disabling this feature will destroy some amount of liquid on pre-existing worlds!
-fliquid_use_metadata (Use metadata for floating point liquid levels) bool true
+fliquid_use_metadata (Use metadata to store liquid levels) bool true
 
 #    Sets how many different levels of liquid there are between nothing and a full node of liquid.
 #    This will only work if metadata is enabled (param2 mode is stuck with 64 levels).
