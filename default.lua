@@ -55,6 +55,8 @@ fliquid.register_liquid("fliquid:lava", {
 	},
 	
 	paramtype = "light",
+	light_source = default.LIGHT_MAX - 1,
+	
 	use_texture_alpha = "blend",
 	
 	groups = {finite_lava = 1, lava = 3, igniter = 1},

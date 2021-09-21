@@ -1,8 +1,8 @@
 minetest.register_node("fliquid:sponge", {
 	description = "Fsponge",
 	tiles = {"default_dirt.png^[colorize:#ffff00:128"},
-	groups = {crumbly = 3, soil = 1, fsponge = 1},
-	sounds = default.node_sound_dirt_defaults(),
+	groups = {crumbly = 3, soil = 1, fsponge = 1, fliquid_active = 1},
+	sounds = default.node_sound_dirt_defaults()
 })
 
 fliquid.register_on_update(function (pos, liquidType)
@@ -37,8 +37,6 @@ fliquid.register_liquid("fliquid:very_compressible", {
 	paramtype = "light",
 	use_texture_alpha = "blend",
 	
-	groups = {},
-	
 	walkable = false,
 	pointable = false,
 	climbable = true,
@@ -72,8 +70,6 @@ fliquid.register_liquid("fliquid:very_viscous", {
 	
 	paramtype = "light",
 	use_texture_alpha = "blend",
-	
-	groups = {},
 	
 	walkable = false,
 	pointable = false,

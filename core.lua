@@ -1,16 +1,19 @@
 local settings = minetest.settings
 
+local performDisplacement = settings:get_bool("fliquid_displace_liquids", true)
+
 local approximateEquilibrium = settings:get_bool("fliquid_approximate_equilibrium", true)
 local simulationSpeed = tonumber(settings:get("fliquid_simulation_speed") or 10)
 local maxUpdatesPerSecond = tonumber(settings:get("fliquid_max_updates_per_second") or 10000)
-local useMetadata = settings:get_bool("fliquid_use_metadata", true)
-local performDisplacement = settings:get_bool("fliquid_displace_liquids", true)
 
-local supportCompression = settings:get_bool("fliquid_support_compression", false)
+local supportCompression = settings:get_bool("fliquid_support_compression", true)
 local convertLiquids = settings:get_bool("fliquid_convert_liquids", false)
 
+local useMetadata = settings:get_bool("fliquid_use_metadata", true)
+local fullLevel = useMetadata and tonumber(settings:get("fliquid_level_precision") or 720720) or 64
+local useFloatingPoint = useMetadata and settings:get_bool("fliquid_use_floating_point", false)
+
 local defaults = {compressibility = 1/8, viscosity = 0, surface_tension = 1}
-local fullLevel = 64
 
 local registeredUpdateCallbacks = {}
 
@@ -87,15 +90,16 @@ local function setLevel(pos, level, liquidType)
 		local meta = minetest.get_meta(pos)
 		
 		-- This function seems to clear metadata, so call it beforehand
-		minetest.set_node_level(pos, math.min(math.ceil(level), 127))
+		minetest.set_node_level(pos, math.min(math.ceil(level * (64 / fullLevel)), 127))
 		
 		meta:set_int("use_meta", 1)
 		meta:set_float("level", level)
+		meta:set_float("max_level", fullLevel)
 		
 		return 0
 	end
 	
-	local excess = minetest.set_node_level(pos, math.min(level, 127))
+	local excess = minetest.set_node_level(pos, math.min(level * (64 / fullLevel), 127))
 	return excess
 end
 
@@ -108,16 +112,18 @@ local function getLevel(posOrNode, liquidType)
 	
 	if convertLiquids and node.name == getLiquidProperties(liquidType).infinite_counterpart then
 		minetest.set_node(posOrNode, {name = liquidType})
-		setLevel(posOrNode, 64, liquidType)
-		return 64
+		setLevel(posOrNode, fullLevel, liquidType)
+		return fullLevel
 	end
 	
 	if useMetadata then
 		local meta = minetest.get_meta(posOrNode)
-		return meta:get_int("use_meta") > 0 and meta:get_float("level") or minetest.get_node_level(posOrNode)
+		return meta:get_int("use_meta") > 0
+		       and math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
+		       or minetest.get_node_level(posOrNode) * (fullLevel / 64)
 	end
 	
-	return minetest.get_node_level(posOrNode)
+	return minetest.get_node_level(posOrNode) * (fullLevel / 64)
 end
 
 local function addLevel(pos, level, liquidType)
@@ -192,6 +198,21 @@ local function nodeChanged(pos)
 	end
 end
 
+local function determineVerticalDistribution(totalVolume, compressibility)
+	-- (MaxValue * MaxValue + sum * MaxCompression) / (MaxValue + MaxCompression)
+	-- Seems to have a similar behaviour to the one below, but differences decrease faster.
+	-- compressibility = compressibility * fullLevel
+	-- local newLevel = (fullLevel * fullLevel + totalVolume * compressibility) / (fullLevel + compressibility)
+	
+	-- belowNewLevel = myNewLevel * (1 + compressibility)
+	-- Compression differences are amplified with depth.
+	-- local newLevel = (compressibility + 1) * totalVolume / (compressibility + 2)
+	
+	-- belowNewLevel = fullLevel + (myNewLevel * compressibility)
+	-- Compression differences decrease with depth.
+	return math.max((compressibility * totalVolume + fullLevel) / (compressibility + 1), fullLevel)
+end
+
 local function updateLiquid(pos)
 	local node = minetest.get_node(pos)
 	
@@ -214,20 +235,14 @@ local function updateLiquid(pos)
 	local oldLevel = getLevel(pos, liquidType)
 	
 	-- Try to give as much level to the block below as possible
-	-- Retain the hardExcess (> the maximum levelled node level of 127)
 	-- Goal: to get below level to full level + my level * a compressibility factor
 	if canFlowInto(below, liquidType) then
 		local myLevel = getLevel(pos, liquidType)
 		local belowLevel = getLevel(below, liquidType)
 		
 		local totalVolume = myLevel + belowLevel
-		--   (MaxValue * MaxValue + sum * MaxCompression) / (MaxValue + MaxCompression)
-		-- local newLevel = math.max((fullLevel * fullLevel + totalVolume * compressionAmount) / (fullLevel + compressionAmount), fullLevel)
-		--   belowNewLevel = fullLevel + (myNewLevel * compressibility)
-		-- local newLevel = math.max((compressibility * totalVolume + fullLevel) / (compressibility + 1), fullLevel)
-		--   belowNewLevel = myNewLevel * (1 + compressibility)
-		local newLevel = math.max((compressibility + 1) * totalVolume / (compressibility + 2), fullLevel)
-		local roundedFlow = (useMetadata and id or math.ceil)(math.min(newLevel - belowLevel, myLevel))
+		local newLevel = determineVerticalDistribution(totalVolume, compressibility)
+		local roundedFlow = (useFloatingPoint and id or math.ceil)(math.min(newLevel - belowLevel, myLevel))
 		
 		if roundedFlow > 0 then
 			local hardExcess = addLevel(below, roundedFlow, liquidType)
@@ -249,19 +264,13 @@ local function updateLiquid(pos)
 	end
 	
 	-- If we have more than a full block of liquid, try to give the excess to the block above
-	-- Retain the hardExcess (> the maximum levelled node level of 127)
 	if canFlowInto(above, liquidType) then
 		local myLevel = getLevel(pos, liquidType)
 		local aboveLevel = getLevel(above, liquidType)
 		
 		local totalVolume = myLevel + aboveLevel
-		--   (MaxValue * MaxValue + sum * MaxCompression) / (MaxValue + MaxCompression)
-		-- local newLevel = math.min(totalVolume - ((fullLevel * fullLevel + totalVolume * compressionAmount) / (fullLevel + compressionAmount)), myLevel - fullLevel)
-		--   belowNewLevel = fullLevel + (myNewLevel * compressibility)
-		-- local newLevel = math.min((totalVolume - fullLevel) / (compressibility + 1), myLevel - fullLevel)
-		--   aboveNewLevel = myNewLevel / (1 + compressibility)
-		local newLevel = math.min(totalVolume / (compressibility + 2), myLevel - fullLevel)
-		local roundedFlow = (useMetadata and id or math.floor)(math.min(newLevel - aboveLevel, myLevel - fullLevel))
+		local newLevel = totalVolume - determineVerticalDistribution(totalVolume, compressibility)
+		local roundedFlow = (useFloatingPoint and id or math.floor)(math.min(newLevel - aboveLevel, myLevel - fullLevel))
 		
 		if roundedFlow > 0 then
 			local hardExcess = addLevel(above, roundedFlow, liquidType)
@@ -308,11 +317,13 @@ local function updateLiquid(pos)
 				local fullSpeedFlow = math.min(newLevel - neighborLevel, myLevel)
 				
 				local roundedFlow = fullSpeedFlow * flowSpeed
+				if not useFloatingPoint then
 				-- Randomize whether we use floor or ceil here - easy way to support "sub-level" flow speeds
-				roundedFlow = (useMetadata and id or math.random(1, 2) == 1 and math.ceil or math.floor)(math.abs(roundedFlow)) * sign(roundedFlow)
+					roundedFlow = (math.random(1, 2) == 1 and math.ceil or math.floor)(math.abs(roundedFlow)) * sign(roundedFlow)
+				end
 				
-				if (not approximateEquilibrium or math.abs(fullSpeedFlow) > (useMetadata and 0.0001 or 0.5)) then
-					if fullSpeedFlow > 0 and ((getLevel(below, liquidType) > 0 or myLevel > surfaceTensionLevel) or neighborLevel > 0) then
+				if (not approximateEquilibrium or math.abs(fullSpeedFlow) > math.min(fullLevel / 512, 0.5)) then
+					if fullSpeedFlow > 0 and (neighborLevel > 0 or myLevel > surfaceTensionLevel) then
 						local hardExcess = addLevel(neighbor, roundedFlow, liquidType)
 						setLevel(pos, myLevel + hardExcess - roundedFlow, liquidType)
 						
@@ -367,9 +378,9 @@ end
 -- Schedule update when a node is removed
 minetest.register_on_dignode(nodeChanged)
 
--- Do the same thing here, but only if the node placed permits flow
+-- Do the same thing here, but only if the node placed permits or manipulates flow
 minetest.register_on_placenode(function (pos, newnode, placer, oldnode, itemstack, pointed_thing)
-	if not canFlowInto(pos) then return end
+	if not canFlowInto(pos) and minetest.get_item_group(newnode.name, "fliquid_active") < 1 then return end
 	nodeChanged(pos)
 end)
 
@@ -422,7 +433,7 @@ local function registerLiquid(name, def)
 	-- Properties required of all nodes generated for this liquid
 	def.paramtype2 = "leveled"
 	def.description = def.description or name
-	def.leveled_max = def.leveled_max or 127
+	def.leveled_max = 127
 	def.drop = ""
 	
 	def.fliquid_type = name
@@ -436,7 +447,7 @@ local function registerLiquid(name, def)
 		
 		if not pos then return itemstack end
 		
-		setLevel(pos, 64, name)
+		setLevel(pos, fullLevel, name)
 		nodeChanged(pos)
 		
 		return itemstack
@@ -462,7 +473,7 @@ local function registerLiquid(name, def)
 			
 			action = function (pos, node)
 				minetest.set_node(pos, {name = name, param2 = 64})
-				setLevel(pos, 64, name)
+				setLevel(pos, fullLevel, name)
 				nodeChanged(pos)
 			end
 		})
