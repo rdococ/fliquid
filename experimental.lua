@@ -18,6 +18,32 @@ fliquid.register_on_update(function (pos, liquidType)
 	end
 end)
 
+minetest.register_node("fliquid:spring", {
+	description = "Fspring",
+	tiles = {"default_dirt.png^[colorize:#00ffff:128"},
+	groups = {crumbly = 3, soil = 1, fspring = 1},
+	sounds = default.node_sound_dirt_defaults()
+})
+
+minetest.register_abm({
+	label = "Fliquid springs",
+	
+	nodenames = {"group:fspring"},
+	
+	interval = 1,
+	chance = 1,
+	
+	action = function (pos)
+		local neighbors = fliquid.get_neighbors(pos)
+	
+		for _, neighbor in pairs(neighbors) do
+			if fliquid.can_flow_into(neighbor, "fliquid:water") then
+				fliquid.add_level(neighbor, fliquid.full_level, "fliquid:water")
+			end
+		end
+	end
+})
+
 fliquid.register_liquid("fliquid:very_compressible", {
 	description = "Finite Very Compressible Liquid",
 	

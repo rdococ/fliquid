@@ -81,7 +81,7 @@ local function setLevel(pos, level, liquidType)
 		minetest.set_node(pos, {name = liquidType .. "_fullish"})
 	end
 	
-	if level == 0 then
+	if level <= 0 then
 		minetest.remove_node(pos)
 		return 0
 	end
@@ -103,27 +103,26 @@ local function setLevel(pos, level, liquidType)
 	return excess
 end
 
-local function getLevel(posOrNode, liquidType)
-	if not liquidType then liquidType = getLiquidType(posOrNode) end
-	local node, wasPos = getNode(posOrNode)
+local function getLevel(pos, liquidType)
+	if not liquidType then liquidType = getLiquidType(pos) end
+	local node = minetest.get_node(pos)
 	
-	if not isLiquidType(posOrNode, liquidType) then return 0 end
-	if not wasPos then return node.param2 end
+	if not isLiquidType(pos, liquidType) then return 0 end
 	
 	if convertLiquids and node.name == getLiquidProperties(liquidType).infinite_counterpart then
-		minetest.set_node(posOrNode, {name = liquidType})
-		setLevel(posOrNode, fullLevel, liquidType)
+		minetest.set_node(pos, {name = liquidType})
+		setLevel(pos, fullLevel, liquidType)
 		return fullLevel
 	end
 	
 	if useMetadata then
-		local meta = minetest.get_meta(posOrNode)
+		local meta = minetest.get_meta(pos)
 		return meta:get_int("use_meta") > 0
 		       and math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
-		       or minetest.get_node_level(posOrNode) * (fullLevel / 64)
+		       or minetest.get_node_level(pos) * (fullLevel / 64)
 	end
 	
-	return minetest.get_node_level(posOrNode) * (fullLevel / 64)
+	return minetest.get_node_level(pos) * (fullLevel / 64)
 end
 
 local function addLevel(pos, level, liquidType)
@@ -159,9 +158,9 @@ local function updateLiquidState(pos, liquidType)
 	local myLevel = minetest.get_node_level(pos, liquidType)
 	local below = vector.add(pos, {x = 0, y = -1, z = 0})
 	
-	if myLevel < fullLevel / 2 then
+	if myLevel < 32 then
 		minetest.swap_node(pos, {name = liquidType .. "_emptyish", param1 = node.param1, param2 = node.param2})
-	elseif myLevel < fullLevel then
+	elseif myLevel < 64 then
 		minetest.swap_node(pos, {name = liquidType .. "_fullish", param1 = node.param1, param2 = node.param2})
 	else
 		minetest.swap_node(pos, {name = liquidType, param1 = node.param1, param2 = node.param2})
@@ -529,6 +528,8 @@ fliquid = {
 	
 	is_liquid_type  = isLiquidType,
 	get_liquid_type = getLiquidType,
+	
+	can_flow_into   = canFlowInto,
 	
 	full_level      = fullLevel,
 	
