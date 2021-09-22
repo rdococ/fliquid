@@ -31,6 +31,6 @@ fliquid_experimental_blocks (Add experimental blocks and items) bool false
 #    Changing this in pre-existing worlds will result in weirdness as levels are converted between different precisions!
 fliquid_level_precision (Liquid level precision) int 360
 
-#    If enabled (and metadata is enabled), uses floating point numbers to store liquid levels.
+#    If enabled, uses floating point numbers to store liquid levels.
 #    This will cause slight violations of conservation of mass due to rounding errors!
 fliquid_use_floating_point (Use floating point liquid levels) bool false
