@@ -7,11 +7,9 @@ local simulationSpeed = tonumber(settings:get("fliquid_simulation_speed") or 10)
 local maxUpdatesPerSecond = tonumber(settings:get("fliquid_max_updates_per_second") or 10000)
 
 local supportCompression = settings:get_bool("fliquid_support_compression", true)
-local convertLiquids = settings:get_bool("fliquid_convert_liquids", false)
 
-local useMetadata = settings:get_bool("fliquid_use_metadata", true)
-local fullLevel = useMetadata and tonumber(settings:get("fliquid_level_precision") or 720720) or 64
-local useFloatingPoint = useMetadata and settings:get_bool("fliquid_use_floating_point", false)
+local fullLevel = tonumber(settings:get("fliquid_level_precision")) or 360
+local useFloatingPoint = settings:get_bool("fliquid_use_floating_point", false)
 
 local defaults = {compressibility = 1/8, viscosity = 0, surface_tension = 1}
 
@@ -38,12 +36,32 @@ local function isLiquidType(posOrNode, liquidType)
 	return def.fliquid_type == liquidType
 end
 
+local function getLiquidProperties(liquidType)
+	local def = minetest.registered_nodes[liquidType]
+	
+	if not def then return end
+	
+	return def.fliquid
+end
+
 local function canFlowInto(posOrNode, liquidType)
 	local node = getNode(posOrNode)
 	local def = minetest.registered_nodes[node.name]
 	
 	if not def then return false end
-	if def.liquidtype == "source" then return false end
+	
+	-- Liquids can flow into their infinite counterparts, but no other liquid
+	if def.liquidtype == "source" or def.liquidtype == "flowing" then
+		local properties = getLiquidProperties(liquidType)
+		
+		local infiniteSource = properties and properties.infinite_counterpart
+		if infiniteSource then
+			local infiniteFlowing = minetest.registered_nodes[infiniteSource].liquid_alternative_flowing
+			return node.name == infiniteSource or node.name == infiniteFlowing
+		end
+		
+		return false
+	end
 	
 	return isLiquidType(posOrNode, liquidType)
 	        or minetest.get_item_group(node.name, "fliquid") < 1
@@ -60,18 +78,42 @@ local function getLiquidType(posOrNode)
 	return def.fliquid_type
 end
 
-local function getLiquidProperties(liquidType)
-	local def = minetest.registered_nodes[liquidType]
+local function getLevel(pos, liquidType)
+	if not liquidType then liquidType = getLiquidType(pos) end
+	local node = minetest.get_node(pos)
 	
-	if not def then return end
+	-- Infinite sources are treated as fullLevel, infinite flowing levels are converted to finite levels without converting the node itself
+	-- Finite liquid will only override infinite flowing liquid if it's higher
+	local properties = getLiquidProperties(liquidType)
+	local infiniteSource = properties and properties.infinite_counterpart
+	if infiniteSource then
+		local infiniteFlowing = minetest.registered_nodes[infiniteSource].liquid_alternative_flowing
+		if node.name == infiniteSource then
+			return fullLevel
+		elseif node.name == infiniteFlowing then
+			return (node.param2 % 8) * (fullLevel / 8)
+		end
+	end
 	
-	return def.fliquid
+	if not isLiquidType(pos, liquidType) then return 0 end
+	
+	local meta = minetest.get_meta(pos)
+	return math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
 end
 
 local function setLevel(pos, level, liquidType)
 	if not liquidType then liquidType = getLiquidType(pos) end
 	if not isLiquidType(pos, liquidType) then
 		if not canFlowInto(pos, liquidType) then return level end
+		
+		local node = minetest.get_node(pos)
+		local infiniteSource = getLiquidProperties(liquidType).infinite_counterpart
+		if infiniteSource then
+			local infiniteFlowing = minetest.registered_nodes[infiniteSource].liquid_alternative_flowing
+			if (node.name == infiniteSource or node.name == infiniteFlowing) and level < getLevel(pos, liquidType) then
+				return level
+			end
+		end
 		
 		local drops = minetest.get_node_drops(minetest.get_node(pos), "")
 		for _, item in pairs(drops) do
@@ -86,43 +128,13 @@ local function setLevel(pos, level, liquidType)
 		return 0
 	end
 	
-	if useMetadata then
-		local meta = minetest.get_meta(pos)
-		
-		-- This function seems to clear metadata, so call it beforehand
-		minetest.set_node_level(pos, math.min(math.ceil(level * (64 / fullLevel)), 127))
-		
-		meta:set_int("use_meta", 1)
-		meta:set_float("level", level)
-		meta:set_float("max_level", fullLevel)
-		
-		return 0
-	end
+	local meta = minetest.get_meta(pos)
 	
-	local excess = minetest.set_node_level(pos, math.min(level * (64 / fullLevel), 127))
-	return excess
-end
-
-local function getLevel(pos, liquidType)
-	if not liquidType then liquidType = getLiquidType(pos) end
-	local node = minetest.get_node(pos)
+	meta:set_int("use_meta", 1)
+	meta:set_float("level", level)
+	meta:set_float("max_level", fullLevel)
 	
-	if not isLiquidType(pos, liquidType) then return 0 end
-	
-	if convertLiquids and node.name == getLiquidProperties(liquidType).infinite_counterpart then
-		minetest.set_node(pos, {name = liquidType})
-		setLevel(pos, fullLevel, liquidType)
-		return fullLevel
-	end
-	
-	if useMetadata then
-		local meta = minetest.get_meta(pos)
-		return meta:get_int("use_meta") > 0
-		       and math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
-		       or minetest.get_node_level(pos) * (fullLevel / 64)
-	end
-	
-	return minetest.get_node_level(pos) * (fullLevel / 64)
+	return 0
 end
 
 local function addLevel(pos, level, liquidType)
@@ -148,22 +160,21 @@ do
 	end
 end
 
-local function updateLiquidState(pos, liquidType)
+local function updateLiquidDisplay(pos, liquidType)
 	if not liquidType then liquidType = getLiquidType(pos) end
 	if not isLiquidType(pos, liquidType) then return end
 	
 	local node = minetest.get_node(pos)
 	
 	-- Use displayed node level here
-	local myLevel = minetest.get_node_level(pos, liquidType)
-	local below = vector.add(pos, {x = 0, y = -1, z = 0})
+	local displayLevel = math.min(math.ceil(getLevel(pos, liquidType) * (64 / fullLevel)), 127)
 	
-	if myLevel < 32 then
-		minetest.swap_node(pos, {name = liquidType .. "_emptyish", param1 = node.param1, param2 = node.param2})
-	elseif myLevel < 64 then
-		minetest.swap_node(pos, {name = liquidType .. "_fullish", param1 = node.param1, param2 = node.param2})
+	if displayLevel < 32 then
+		minetest.swap_node(pos, {name = liquidType .. "_emptyish", param1 = node.param1, param2 = displayLevel})
+	elseif displayLevel < 64 then
+		minetest.swap_node(pos, {name = liquidType .. "_fullish", param1 = node.param1, param2 = displayLevel})
 	else
-		minetest.swap_node(pos, {name = liquidType, param1 = node.param1, param2 = node.param2})
+		minetest.swap_node(pos, {name = liquidType, param1 = node.param1, param2 = displayLevel})
 	end
 end
 
@@ -184,7 +195,7 @@ do
 			local timer = minetest.get_node_timer(pos)
 			if not timer:is_started() then
 				updates = updates + 1
-				timer:start(math.floor(updates / 1000) / simulationSpeed)
+				timer:start(1 / simulationSpeed)
 			end
 		end
 	end
@@ -198,17 +209,7 @@ local function nodeChanged(pos)
 end
 
 local function determineVerticalDistribution(totalVolume, compressibility)
-	-- (MaxValue * MaxValue + sum * MaxCompression) / (MaxValue + MaxCompression)
-	-- Seems to have a similar behaviour to the one below, but differences decrease faster.
-	-- compressibility = compressibility * fullLevel
-	-- local newLevel = (fullLevel * fullLevel + totalVolume * compressibility) / (fullLevel + compressibility)
-	
-	-- belowNewLevel = myNewLevel * (1 + compressibility)
-	-- Compression differences are amplified with depth.
-	-- local newLevel = (compressibility + 1) * totalVolume / (compressibility + 2)
-	
 	-- belowNewLevel = fullLevel + (myNewLevel * compressibility)
-	-- Compression differences decrease with depth.
 	return math.max((compressibility * totalVolume + fullLevel) / (compressibility + 1), fullLevel)
 end
 
@@ -222,7 +223,7 @@ local function updateLiquid(pos)
 	local flowSpeed = 1 - properties.viscosity
 	local surfaceTensionLevel = properties.surface_tension * fullLevel
 	
-	updateLiquidState(pos, liquidType)
+	updateLiquidDisplay(pos, liquidType)
 	
 	-- Calculate these only once, because we're likely to need them
 	local horizNeighbors = getNeighbors(pos, true)
@@ -247,8 +248,8 @@ local function updateLiquid(pos)
 			local hardExcess = addLevel(below, roundedFlow, liquidType)
 			setLevel(pos, myLevel + hardExcess - roundedFlow, liquidType)
 			
-			updateLiquidState(below, liquidType)
-			updateLiquidState(pos, liquidType)
+			updateLiquidDisplay(below, liquidType)
+			updateLiquidDisplay(pos, liquidType)
 			
 			-- Their water level increased, so they need to spread out
 			scheduleUpdate(below, liquidType)
@@ -275,8 +276,8 @@ local function updateLiquid(pos)
 			local hardExcess = addLevel(above, roundedFlow, liquidType)
 			setLevel(pos, myLevel + hardExcess - roundedFlow, liquidType)
 			
-			updateLiquidState(above, liquidType)
-			updateLiquidState(pos, liquidType)
+			updateLiquidDisplay(above, liquidType)
+			updateLiquidDisplay(pos, liquidType)
 			
 			-- Their water level increased, so they need to spread out
 			scheduleUpdate(above, liquidType)
@@ -326,11 +327,12 @@ local function updateLiquid(pos)
 						local hardExcess = addLevel(neighbor, roundedFlow, liquidType)
 						setLevel(pos, myLevel + hardExcess - roundedFlow, liquidType)
 						
-						updateLiquidState(neighbor, liquidType)
-						updateLiquidState(pos, liquidType)
+						updateLiquidDisplay(neighbor, liquidType)
+						updateLiquidDisplay(pos, liquidType)
 						
+						-- Their level increased, so schedule them
 						scheduleUpdate(neighbor, liquidType)
-						scheduleUpdate(pos, liquidType)
+						-- Our level decreased
 						for _, aNeighbor in pairs(allNeighbors) do
 							scheduleUpdate(aNeighbor, liquidType)
 						end
@@ -383,7 +385,7 @@ minetest.register_on_placenode(function (pos, newnode, placer, oldnode, itemstac
 	nodeChanged(pos)
 end)
 
--- Hacky solution to enable liquid displacement with useMetadata = true
+-- Hacky solution to enable liquid displacement
 do
 	local old_place = minetest.item_place_node
 	
@@ -455,28 +457,6 @@ local function registerLiquid(name, def)
 	-- Override the node timer entirely
 	-- (we'll be triggering it anyway so it will mess up any extra timing mechanisms applied)
 	def.on_timer = updateLiquid
-	
-	if convertLiquids and def.fliquid.infinite_counterpart then
-		local infiniteSource = def.fliquid.infinite_counterpart
-		local infiniteFlowing = minetest.registered_nodes[infiniteSource].liquid_alternative_flowing
-		
-		minetest.register_abm({
-			label = "Convert infinite liquid to finite liquid upon spreading",
-			
-			nodenames = {infiniteFlowing},
-			neighbors = {},
-			
-			interval = 1,
-			chance = 1,
-			catch_up = false,
-			
-			action = function (pos, node)
-				minetest.set_node(pos, {name = name, param2 = 64})
-				setLevel(pos, fullLevel, name)
-				nodeChanged(pos)
-			end
-		})
-	end
 	
 	-- Full state - render as cube, swimmable, drownable
 	-- This is what you see in the creative inventory, because its inventory image is a full cube

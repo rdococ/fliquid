@@ -26,21 +26,10 @@ fliquid_max_updates_per_second (Maximum updates per second) int 10000
 #    If enabled, adds experimental blocks used to test the mod.
 fliquid_experimental_blocks (Add experimental blocks and items) bool false
 
-#    If enabled, converts infinite water and lava to their finite equivalents when they flow.
-#    Very experimental and doesn't work properly at the moment.
-fliquid_convert_liquids (Convert water and lava to finite on flow) bool false
-
-#    If enabled, uses metadata to store liquid levels as floating point numbers. Otherwise, uses param2 alone to store liquid levels as integers from 0 to 127.
-#    Makes it easier for many bodies of liquid to fully equalize, but uses a bit more memory.
-#    Disabling this will make the 'approximate equilibrium' setting far less accurate (as now it can only achieve 1/64, not a very low value).
-#    Disabling this feature will destroy some amount of liquid on pre-existing worlds!
-fliquid_use_metadata (Use metadata to store liquid levels) bool true
-
 #    Sets how many different levels of liquid there are between nothing and a full node of liquid.
-#    This will only work if metadata is enabled (param2 mode is stuck with 64 levels).
 #    It's good to set this to a highly composite number, even if floating point levels are being used.
-#    Changing this in pre-existing worlds may result in weirdness as levels are converted between different precisions!
-fliquid_level_precision (Liquid level precision) int 720720
+#    Changing this in pre-existing worlds will result in weirdness as levels are converted between different precisions!
+fliquid_level_precision (Liquid level precision) int 360
 
 #    If enabled (and metadata is enabled), uses floating point numbers to store liquid levels.
 #    This will cause slight violations of conservation of mass due to rounding errors!
