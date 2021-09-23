@@ -186,7 +186,7 @@ do
 
 	minetest.register_globalstep(function (dtime)
 		t = t + dtime
-		if t >= 1 then t = 0; minetest.chat_send_all("Updates: " .. tostring(updates)); updates = 0 end
+		if t >= 1 then t = 0; updates = 0 end
 	end)
 
 	scheduleUpdate = function (pos, liquidType, priority)
