@@ -3,10 +3,9 @@ local settings = minetest.settings
 local performDisplacement = settings:get_bool("fliquid_displace_liquids", true)
 
 local approximateEquilibrium = settings:get_bool("fliquid_approximate_equilibrium", true)
+local supportCompression = settings:get_bool("fliquid_support_compression", true)
 local simulationSpeed = tonumber(settings:get("fliquid_simulation_speed") or 10)
 local maxUpdatesPerSecond = tonumber(settings:get("fliquid_max_updates_per_second") or 10000)
-
-local supportCompression = settings:get_bool("fliquid_support_compression", true)
 
 local fullLevel = tonumber(settings:get("fliquid_level_precision")) or 360
 local useFloatingPoint = settings:get_bool("fliquid_use_floating_point", false)
@@ -50,6 +49,8 @@ local function canFlowInto(posOrNode, liquidType)
 	
 	if not def then return false end
 	
+	if isLiquidType(posOrNode, liquidType) then return true end
+	
 	-- Liquids can flow into their infinite counterparts, but no other liquid
 	if def.liquidtype == "source" or def.liquidtype == "flowing" then
 		local properties = getLiquidProperties(liquidType)
@@ -63,8 +64,7 @@ local function canFlowInto(posOrNode, liquidType)
 		return false
 	end
 	
-	return isLiquidType(posOrNode, liquidType)
-	        or minetest.get_item_group(node.name, "fliquid") < 1
+	return minetest.get_item_group(node.name, "fliquid") < 1
 	        and (not def.walkable or minetest.get_item_group(node.name, "oddly_allows_fliquid") > 0)
 	        and minetest.get_item_group(node.name, "oddly_blocks_fliquid") < 1
 end
@@ -101,6 +101,24 @@ local function getLevel(pos, liquidType)
 	return math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
 end
 
+local function updateLiquidDisplay(pos, liquidType)
+	if not liquidType then liquidType = getLiquidType(pos) end
+	if not isLiquidType(pos, liquidType) then return end
+	
+	local node = minetest.get_node(pos)
+	
+	-- Use displayed node level here
+	local displayLevel = math.min(math.ceil(getLevel(pos, liquidType) * (64 / fullLevel)), 127)
+	
+	if displayLevel < 32 then
+		minetest.swap_node(pos, {name = liquidType .. "_emptyish", param1 = node.param1, param2 = displayLevel})
+	elseif displayLevel < 64 then
+		minetest.swap_node(pos, {name = liquidType .. "_fullish", param1 = node.param1, param2 = displayLevel})
+	else
+		minetest.swap_node(pos, {name = liquidType, param1 = node.param1, param2 = displayLevel})
+	end
+end
+
 local function setLevel(pos, level, liquidType)
 	if not liquidType then liquidType = getLiquidType(pos) end
 	if not isLiquidType(pos, liquidType) then
@@ -134,6 +152,8 @@ local function setLevel(pos, level, liquidType)
 	meta:set_float("level", level)
 	meta:set_float("max_level", fullLevel)
 	
+	updateLiquidDisplay(pos, liquidType)
+	
 	return 0
 end
 
@@ -160,40 +180,23 @@ do
 	end
 end
 
-local function updateLiquidDisplay(pos, liquidType)
-	if not liquidType then liquidType = getLiquidType(pos) end
-	if not isLiquidType(pos, liquidType) then return end
-	
-	local node = minetest.get_node(pos)
-	
-	-- Use displayed node level here
-	local displayLevel = math.min(math.ceil(getLevel(pos, liquidType) * (64 / fullLevel)), 127)
-	
-	if displayLevel < 32 then
-		minetest.swap_node(pos, {name = liquidType .. "_emptyish", param1 = node.param1, param2 = displayLevel})
-	elseif displayLevel < 64 then
-		minetest.swap_node(pos, {name = liquidType .. "_fullish", param1 = node.param1, param2 = displayLevel})
-	else
-		minetest.swap_node(pos, {name = liquidType, param1 = node.param1, param2 = displayLevel})
-	end
-end
-
 local scheduleUpdate
 do
 	local updates, t = 0, 0
 
 	minetest.register_globalstep(function (dtime)
 		t = t + dtime
-		if t >= 1 then t = 0; updates = 0 end
+		if t >= 1 then t = 0; minetest.chat_send_all("Updates: " .. tostring(updates)); updates = 0 end
 	end)
 
-	scheduleUpdate = function (pos, liquidType)
+	scheduleUpdate = function (pos, liquidType, priority)
+		priority = priority or 1
 		if updates >= maxUpdatesPerSecond then return end
 		
 		local node = minetest.get_node(pos)
 		if getLiquidType(pos) and (not liquidType or isLiquidType(pos, liquidType)) then
 			local timer = minetest.get_node_timer(pos)
-			if not timer:is_started() then
+			if math.random() >= updates / maxUpdatesPerSecond - priority and not timer:is_started() then
 				updates = updates + 1
 				timer:start(1 / simulationSpeed)
 			end
@@ -252,14 +255,14 @@ local function updateLiquid(pos)
 			updateLiquidDisplay(pos, liquidType)
 			
 			-- Their water level increased, so they need to spread out
-			scheduleUpdate(below, liquidType)
+			scheduleUpdate(below, liquidType, roundedFlow / fullLevel)
 			-- Our water level decreased, so tell my neighbours to spread
 			for _, neighbor in pairs(allNeighbors) do
-				scheduleUpdate(neighbor, liquidType)
+				scheduleUpdate(neighbor, liquidType, roundedFlow / fullLevel)
 			end
 		elseif roundedFlow < 0 then
 			-- Whoops - they actually need to spread into us!
-			scheduleUpdate(below, liquidType)
+			scheduleUpdate(below, liquidType, roundedFlow / fullLevel)
 		end
 	end
 	
@@ -283,11 +286,11 @@ local function updateLiquid(pos)
 			scheduleUpdate(above, liquidType)
 			-- Our water level decreased, so tell my neighbours to spread
 			for _, neighbor in pairs(allNeighbors) do
-				scheduleUpdate(neighbor, liquidType)
+				scheduleUpdate(neighbor, liquidType, roundedFlow / fullLevel)
 			end
 		elseif roundedFlow < 0 then
 			-- Whoops - they actually need to spread into us!
-			scheduleUpdate(above, liquidType)
+			scheduleUpdate(above, liquidType, roundedFlow / fullLevel)
 		end
 	end
 	
@@ -318,11 +321,12 @@ local function updateLiquid(pos)
 				
 				local roundedFlow = fullSpeedFlow * flowSpeed
 				if not useFloatingPoint then
-				-- Randomize whether we use floor or ceil here - easy way to support "sub-level" flow speeds
-					roundedFlow = (math.random(1, 2) == 1 and math.ceil or math.floor)(math.abs(roundedFlow)) * sign(roundedFlow)
+					-- Randomize whether we use floor or ceil here - easy way to support "sub-level" flow speeds
+					-- roundedFlow = (math.random(1, 2) == 1 and math.ceil or math.floor)(math.abs(roundedFlow)) * sign(roundedFlow)
+					roundedFlow = math.ceil(math.abs(roundedFlow)) * sign(roundedFlow)
 				end
 				
-				if (not approximateEquilibrium or math.abs(fullSpeedFlow) > math.min(fullLevel / 512, 0.5)) then
+				if (not approximateEquilibrium or math.abs(fullSpeedFlow) > fullLevel / 64) then
 					if fullSpeedFlow > 0 and (neighborLevel > 0 or myLevel > surfaceTensionLevel) then
 						local hardExcess = addLevel(neighbor, roundedFlow, liquidType)
 						setLevel(pos, myLevel + hardExcess - roundedFlow, liquidType)
@@ -331,14 +335,14 @@ local function updateLiquid(pos)
 						updateLiquidDisplay(pos, liquidType)
 						
 						-- Their level increased, so schedule them
-						scheduleUpdate(neighbor, liquidType)
+						scheduleUpdate(neighbor, liquidType, roundedFlow / fullLevel)
 						-- Our level decreased
 						for _, aNeighbor in pairs(allNeighbors) do
-							scheduleUpdate(aNeighbor, liquidType)
+							scheduleUpdate(aNeighbor, liquidType, roundedFlow / fullLevel)
 						end
 					elseif fullSpeedFlow < 0 then
 						-- Whoops - they actually need to spread into us!
-						scheduleUpdate(neighbor, liquidType)
+						scheduleUpdate(neighbor, liquidType, roundedFlow / fullLevel)
 					end
 				end
 			end
@@ -471,6 +475,7 @@ local function registerLiquid(name, def)
 	fullishDef.node_box = {type = "leveled", fixed = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5}}
 	fullishDef.description = def.description .. " (nearly full)"
 	fullishDef.groups.not_in_creative_inventory = 1
+	
 	minetest.register_node(name .. "_fullish", fullishDef)
 	
 	-- Mostly empty state - unswimmable, undrownable
@@ -480,6 +485,7 @@ local function registerLiquid(name, def)
 	emptyishDef.post_effect_color = nil
 	emptyishDef.description = def.description .. " (nearly empty)"
 	emptyishDef.groups.not_in_creative_inventory = 1
+	
 	minetest.register_node(name .. "_emptyish", emptyishDef)
 	
 	return name
