@@ -2,7 +2,7 @@ minetest.register_node("fliquid:sponge", {
 	description = "Fsponge",
 	tiles = {"default_dirt.png^[colorize:#ffff00:128"},
 	groups = {crumbly = 3, soil = 1, fsponge = 1, fliquid_active = 1},
-	sounds = default.node_sound_dirt_defaults()
+	sounds = default and default.node_sound_dirt_defaults()
 })
 
 fliquid.register_on_update(function (pos, liquidType)
@@ -22,7 +22,7 @@ minetest.register_node("fliquid:spring", {
 	description = "Fspring",
 	tiles = {"default_dirt.png^[colorize:#00ffff:128"},
 	groups = {crumbly = 3, soil = 1, fspring = 1},
-	sounds = default.node_sound_dirt_defaults()
+	sounds = default and default.node_sound_dirt_defaults()
 })
 
 minetest.register_abm({

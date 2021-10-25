@@ -96,6 +96,7 @@ local function getLevel(pos, liquidType)
 	end
 	
 	if not isLiquidType(pos, liquidType) then return 0 end
+	if node.name:sub(-9, -1) == "_autofill" then return fullLevel end
 	
 	local meta = minetest.get_meta(pos)
 	return math.max(meta:get_float("level") * (fullLevel / (meta:get_float("max_level") or 64)), 0)
@@ -106,6 +107,12 @@ local function updateLiquidDisplay(pos, liquidType)
 	if not isLiquidType(pos, liquidType) then return end
 	
 	local node = minetest.get_node(pos)
+	if node.name:sub(-9, -1) == "_autofill" then
+		local meta = minetest.get_meta(pos)
+		meta:set_int("use_meta", 1)
+		meta:set_float("level", fullLevel)
+		meta:set_float("max_level", fullLevel)
+	end
 	
 	-- Use displayed node level here
 	local displayLevel = math.min(math.ceil(getLevel(pos, liquidType) * (64 / fullLevel)), 127)
@@ -487,6 +494,12 @@ local function registerLiquid(name, def)
 	emptyishDef.groups.not_in_creative_inventory = 1
 	
 	minetest.register_node(name .. "_emptyish", emptyishDef)
+	
+	-- Autofill state
+	local autofillDef = copy(fullDef)
+	autofillDef.description = def.description .. " (autofill)"
+	
+	minetest.register_node(name .. "_autofill", autofillDef)
 	
 	return name
 end
